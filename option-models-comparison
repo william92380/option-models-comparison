@@ -1,0 +1,196 @@
+# Binomial Tree Option Pricer - Cox-Ross-Rubinstein Model
+# Author: Your Team
+# Description: This script calculates the price of a call or put option (European or American)
+#              using the binomial tree model. It also compares results with the Black-Scholes formula
+#              and provides a visual representation of the pricing tree.
+
+import numpy as np
+import math
+import matplotlib.pyplot as plt
+from scipy.stats import norm  # Used for the Black-Scholes formula
+
+# ------------------------------------------
+# PART 1: BINOMIAL OPTION PRICING FUNCTION
+# ------------------------------------------
+
+def binomial_tree_option_pricer(S0, K, T, r, sigma, N, option_type='call', american=False):
+    """
+    Computes the option price using the binomial tree method.
+    S0 = initial price of the asset
+    K = strike price
+    T = time to maturity (in years)
+    r = risk-free interest rate (annual)
+    sigma = volatility of the asset
+    N = number of time steps
+    option_type = 'call' or 'put'
+    american = True for American option (can be exercised early)
+    """
+    dt = T / N  # Length of each time step (e.g. 1 year / 4 steps = 0.25)
+    u = math.exp(sigma * math.sqrt(dt))  # Up movement factor
+    d = 1 / u  # Down movement factor (inverse of up)
+    p = (math.exp(r * dt) - d) / (u - d)  # Risk-neutral probability
+
+    # Create empty trees to store asset prices and option values at each step
+    asset_tree = [[0.0 for _ in range(i + 1)] for i in range(N + 1)]
+    option_tree = [[0.0 for _ in range(i + 1)] for i in range(N + 1)]
+
+    # Step 1: Compute asset prices and option values at maturity (last row of the tree)
+    for j in range(N + 1):
+        asset_tree[N][j] = S0 * (u ** j) * (d ** (N - j))  # Asset price at each end node
+        if option_type == 'call':
+            option_tree[N][j] = max(asset_tree[N][j] - K, 0)  # Payoff of a call option
+        else:
+            option_tree[N][j] = max(K - asset_tree[N][j], 0)  # Payoff of a put option
+
+    # Step 2: Work backward through the tree (from maturity to time 0)
+    for i in range(N - 1, -1, -1):  # Reverse through time steps
+        for j in range(i + 1):
+            asset_tree[i][j] = S0 * (u ** j) * (d ** (i - j))  # Recompute asset price at each node
+
+            # Calculate expected option value using risk-neutral pricing
+            continuation = math.exp(-r * dt) * (
+                p * option_tree[i + 1][j + 1] + (1 - p) * option_tree[i + 1][j]
+            )
+
+            # For American options, check if early exercise is better
+            if american:
+                intrinsic = max(asset_tree[i][j] - K, 0) if option_type == 'call' else max(K - asset_tree[i][j], 0)
+                option_tree[i][j] = max(continuation, intrinsic)  # Choose the higher value
+            else:
+                option_tree[i][j] = continuation  # Only consider continuation value
+
+    # Return final price and full trees for plotting
+    return option_tree[0][0], asset_tree, option_tree, u, d, p
+
+# ------------------------------------------
+# PART 2: VISUALIZATION FUNCTION
+# ------------------------------------------
+
+def visualize_binomial_tree(asset_tree, option_tree, u, d, p):
+    """
+    Visualizes the asset and option value at each node in the binomial tree.
+    Each node displays: S = asset price, V = option value
+    """
+    fig, ax = plt.subplots(figsize=(14, 10))
+    N = len(asset_tree) - 1  # Number of steps
+
+    for i in range(N + 1):  # For each column (time step)
+        for j in range(i + 1):  # For each node in the column
+            x = i  # Horizontal position = time step
+            y = j - i / 2  # Vertical spacing for clarity
+            asset_price = asset_tree[i][j]
+            option_value = option_tree[i][j]
+
+            # Add a text box at each node with asset and option values
+            ax.text(x, y, f"S={asset_price:.2f}\nV={option_value:.2f}",
+                    ha='center', va='center', fontsize=8,
+                    bbox=dict(facecolor='white', edgecolor='black', boxstyle='round,pad=0.3'))
+
+            # Draw arrows to next step (up and down)
+            if i < N:
+                ax.plot([x, x + 1], [y, y - 0.5], color='gray', linestyle='--', alpha=0.4)
+                ax.plot([x, x + 1], [y, y + 0.5], color='gray', linestyle='--', alpha=0.4)
+
+    # Styling and labels
+    ax.set_title('Binomial Tree for Option Pricing', fontsize=18, fontweight='bold', color='darkblue')
+    ax.set_xlim(-1, N + 2)
+    ax.set_ylim(-N / 2 - 1, N / 2 + 1)
+    ax.axis('off')
+
+    # Add legend with parameters
+    legend_text = f"Legend:\nS = Asset Price\nV = Option Value\n\nUp Factor (u): {u:.3f}\nDown Factor (d): {d:.3f}\nRisk-neutral Prob. (p): {p:.3f}"
+    plt.gcf().text(0.85, 0.5, legend_text, fontsize=9, va='center', bbox=dict(facecolor='lightyellow', edgecolor='gray'))
+    plt.show()
+
+# ------------------------------------------
+# PART 3: BLACK-SCHOLES PRICER (Benchmark)
+# ------------------------------------------
+
+def black_scholes_price(S0, K, T, r, sigma, option_type='call'):
+    """
+    Computes the theoretical price of a European option using the Black-Scholes formula.
+    """
+    d1 = (math.log(S0 / K) + (r + 0.5 * sigma**2) * T) / (sigma * math.sqrt(T))
+    d2 = d1 - sigma * math.sqrt(T)
+
+    # Use cumulative normal distribution (norm.cdf) for pricing
+    if option_type == 'call':
+        return S0 * norm.cdf(d1) - K * math.exp(-r * T) * norm.cdf(d2)
+    else:
+        return K * math.exp(-r * T) * norm.cdf(-d2) - S0 * norm.cdf(-d1)
+
+# ------------------------------------------
+# PART 4: USER INTERACTION & MAIN FUNCTION
+# ------------------------------------------
+
+def run_custom_pricing():
+    """
+    Gets user input for option parameters and displays price and graph.
+    Compares binomial result with Black-Scholes if the option is European.
+    """
+    print("Enter your custom data for the binomial option pricer:")
+
+    # Helper functions to get and validate user input
+    def get_float(prompt):
+        while True:
+            try:
+                return float(input(prompt))
+            except ValueError:
+                print("Invalid input. Please enter a valid number.")
+
+    def get_int(prompt):
+        while True:
+            try:
+                return int(input(prompt))
+            except ValueError:
+                print("Invalid input. Please enter a whole number.")
+
+    def get_option_type():
+        while True:
+            opt = input("Option type ('call' or 'put'): ").strip().lower()
+            if opt in ['call', 'put']:
+                return opt
+            else:
+                print("Invalid input. Please type 'call' or 'put'.")
+
+    def get_american_flag():
+        while True:
+            resp = input("Is it an American option? (yes/no): ").strip().lower()
+            if resp in ['yes', 'y']:
+                return True
+            elif resp in ['no', 'n']:
+                return False
+            else:
+                print("Invalid input. Please answer 'yes' or 'no'.")
+
+    # Get all parameters from the user
+    S0 = get_float("Initial price (S0): ")
+    K = get_float("Strike price (K): ")
+    T = get_float("Time to maturity in years (T): ")
+    r = get_float("Annual risk-free rate (r, e.g. 0.05): ")
+    sigma = get_float("Volatility (sigma, e.g. 0.2): ")
+    N = get_int("Number of time steps (N): ")
+    option_type = get_option_type()
+    american = get_american_flag()
+
+    # Compute price and show results
+    price, asset_tree, option_tree, u, d, p = binomial_tree_option_pricer(S0, K, T, r, sigma, N, option_type, american)
+    print(f"\nComputed {option_type.capitalize()} Option Price (Binomial): {price:.4f}")
+
+    print("\nGenerating binomial tree visualization...")
+    visualize_binomial_tree(asset_tree, option_tree, u, d, p)
+
+    # Only European options can be compared to Black-Scholes
+    if not american:
+        bs_price = black_scholes_price(S0, K, T, r, sigma, option_type)
+        print(f"\nBlack-Scholes {option_type.capitalize()} Option Price: {bs_price:.4f}")
+
+        diff_percent = abs(price - bs_price) / bs_price * 100
+        print(f"\nDifference between Binomial Pricing and Black-Scholes Formula: {diff_percent:.2f}%")
+
+        if diff_percent > 5:
+            print("\n⚠️ Significant difference detected between Binomial and Black-Scholes pricing (>5%).")
+
+# Run everything if this file is executed directly
+if __name__ == "__main__":
+    run_custom_pricing()
